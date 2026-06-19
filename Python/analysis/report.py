@@ -16,7 +16,15 @@ FIXES (cumulative):
               cpu, ram, error) → warna biru jika REST lebih rendah (REST menang).
               Metrik "higher is better" (throughput) → warna biru jika REST lebih tinggi.
   ISS-06:     Raw JSON: strip difference_scores dari endpoint_metrics juga.
-  n_warning:  Propagate n_warning ke Excel Summary dan Hypotheses sheets.
+  n_warning:  Propagate n_warning ke Excel Summary sheet.
+
+REMOVED:
+  bab5_draft.md export dan sheet Excel Narasi/Research_Questions dihapus.
+  Auto-generated narrative tidak dipakai sebagai sumber teks Bab 5 dan
+  interpretasi RQ1/RQ2/RQ3 tetap tampil di terminal (main.py), bukan di
+  file laporan. Excel sekarang berisi data sheets saja: Summary, detail
+  per group, Soak, Decomposition, CrossScenario, EffectSizeMatrix,
+  SoakComparison, OrderEffects, ChartDesc.
 """
 
 import json
@@ -59,11 +67,13 @@ METRIC_LABELS = {
     "max_rt":             "Max RT (ms)",
     "throughput":         "Throughput (req/s)",
     "functional_error":   "Func. Error Rate",
+    "http_req_failed":    "HTTP Req Failed Rate",
     "sla_breach":         "SLA Breach Rate",
     "checks_pass_rate":   "Checks Pass Rate",
     "payload_bytes":      "Payload Avg (bytes)",
     "http_count":         "HTTP Req Count",
     "cpu_pct":            "CPU % (backend)",
+    "cpu_total_pct":      "System CPU (%)",
     "mem_mb":             "RAM MB (backend)",
     "pg_active":          "DB Connections",
     "pg_cache_hit_ratio": "DB Cache Hit %",
@@ -77,22 +87,15 @@ METRIC_LABELS = {
 # (JSON envelope overhead), sehingga REST dengan payload lebih kecil = menang.
 LOWER_IS_BETTER = {
     "avg_rt", "med_rt", "p90", "p95", "p99", "min_rt", "max_rt",
-    "cpu_pct", "mem_mb", "functional_error", "sla_breach", "db_query_avg_ms",
+    "cpu_pct", "cpu_total_pct", "mem_mb", "functional_error", "http_req_failed", "sla_breach", "db_query_avg_ms",
     "payload_bytes",
 }
 
 INFERENTIAL_METRICS = ["avg_rt", "p95", "p99", "throughput", "cpu_pct", "mem_mb"]
 
-HYPOTHESIS_MAPPING = [
-    ("H1a", "tRPC lebih cepat di S01 read-only",         "s01_browse",   "load",  "C2", ["p95", "throughput"]),
-    ("H1b", "REST throughput lebih tinggi di S03 write",  "s03_checkout", "load",  "C2", ["throughput", "avg_rt"]),
-    ("H1c", "tRPC unggul di S02 banyak call",             "s02_shopping", "load",  "C2", ["http_count", "p95"]),
-    ("H1d", "CPU tidak beda signifikan di S01",           "s01_browse",   "load",  "C2", ["cpu_pct"]),
-    ("H1e", "tRPC payload lebih besar",                   None,           "load",  "C2", ["payload_bytes"]),
-    ("H1f", "Memory growth tidak beda di soak",           None,           "soak",  "C2", ["mem_mb"]),
-    ("H1g", "Auth overhead kontribusi signifikan",        "s02_shopping", "load",  "C3", ["avg_rt", "p95"]),
-    ("H1h", "tRPC batch kurangi HTTP request 60-80%",     "s02_shopping", "load",  "C4", ["http_count", "throughput"]),
-]
+# HYPOTHESIS_MAPPING dihapus — thesis menggunakan RQ-based framing (RQ1/RQ2/RQ3).
+# Sheet Hypotheses dan Research_Questions tidak diekspor — RQ tetap ditampilkan
+# di terminal (main.py) tapi tidak masuk Excel maupun draft markdown.
 
 
 # ---------------------------------------------------------------------------
@@ -346,262 +349,6 @@ def write_detail_sheet(wb, group_key: str, group: dict):
     ws.column_dimensions["P"].width = 40
     ws.freeze_panes = "A4"
 
-
-def write_research_questions_sheet(wb, all_results: dict, interpretations: dict = None):
-    """
-    Sheet 'Research_Questions' — jawaban RQ1/RQ2/RQ3 berbasis data.
-    Menggantikan sheet Hypotheses yang menggunakan label H1a-H1h.
-    """
-    ws = wb.create_sheet("Research_Questions")
-    ws.merge_cells("A1:F1")
-    ws["A1"] = "JAWABAN PERTANYAAN PENELITIAN — RQ1 / RQ2 / RQ3"
-    ws["A1"].font      = Font(bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill      = PatternFill("solid", fgColor=COLORS["header_bg"])
-    ws["A1"].alignment = Alignment(horizontal="center")
-
-    rq = (interpretations or {}).get("research_questions", {})
-    row = 3
-
-    RQ_COLOR = {"RQ1": "FFE3F2FD", "RQ2": "FFE8F5E9", "RQ3": "FFFFF9C4"}
-
-    for rq_id, rq_data in [("RQ1", rq.get("RQ1",{})),
-                            ("RQ2", rq.get("RQ2",{})),
-                            ("RQ3", rq.get("RQ3",{}))]:
-        if not rq_data:
-            continue
-        bg = RQ_COLOR.get(rq_id, "FFFFFFFF")
-
-        # Section header
-        ws.merge_cells(f"A{row}:F{row}")
-        ws.cell(row=row, column=1, value=f"{rq_id}: {rq_data.get('question','')}").font = Font(bold=True, size=11, color="FFFFFF")
-        ws.cell(row=row, column=1).fill      = PatternFill("solid", fgColor="FF1565C0")
-        ws.cell(row=row, column=1).alignment = Alignment(horizontal="left", wrap_text=True)
-        ws.row_dimensions[row].height = 40
-        row += 1
-
-        # Summary row
-        ws.merge_cells(f"A{row}:F{row}")
-        summary_text = rq_data.get("summary") or rq_data.get("overall","")
-        ws.cell(row=row, column=1, value=summary_text).font = Font(italic=True)
-        ws.cell(row=row, column=1).fill      = PatternFill("solid", fgColor=bg)
-        ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True)
-        ws.row_dimensions[row].height = 55
-        row += 1
-
-        # RQ1 — per-metric detail
-        if rq_id == "RQ1":
-            for ci, h in enumerate(["Metrik","REST Wins","tRPC Wins","Sig REST","Sig tRPC","Avg d","Temuan"], 1):
-                _header_style(ws, row, ci, h, bg="FF1565C0", fg="FFFFFFFF")
-            row += 1
-            for mn, mv in rq_data.get("metrics",{}).items():
-                row_vals = [
-                    mv.get("label", mn),
-                    mv.get("n_rest_wins",0),
-                    mv.get("n_trpc_wins",0),
-                    mv.get("n_sig_rest",0),
-                    mv.get("n_sig_trpc",0),
-                    mv.get("avg_d"),
-                    mv.get("finding","")[:120],
-                ]
-                for ci, val in enumerate(row_vals, 1):
-                    cell = ws.cell(row=row, column=ci, value=val)
-                    cell.alignment = Alignment(wrap_text=True)
-                    cell.fill = PatternFill("solid", fgColor=bg)
-                row += 1
-
-        # RQ2 — REST superior + tRPC superior
-        elif rq_id == "RQ2":
-            # REST superior section
-            ws.cell(row=row, column=1, value=f"REST LEBIH OPTIMAL ({len(rq_data.get('rest_superior',[]))} kasus):").font = Font(bold=True)
-            ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor="FFE8F5E9")
-            ws.merge_cells(f"A{row}:F{row}")
-            row += 1
-            for ci, h in enumerate(["Skenario","Test Type","Metrik","REST","tRPC","Δ","Kalimat"], 1):
-                _header_style(ws, row, ci, h, bg="FF2E7D32", fg="FFFFFFFF")
-            row += 1
-            for e in rq_data.get("rest_superior",[]):
-                row_vals = [
-                    e.get("scenario"), e.get("test_type"),
-                    e.get("metric"), _fmt_float(e.get("rest_mean"),2),
-                    _fmt_float(e.get("trpc_mean"),2),
-                    _fmt_float(e.get("delta"),2),
-                    e.get("sentence","")[:150],
-                ]
-                for ci, val in enumerate(row_vals, 1):
-                    cell = ws.cell(row=row, column=ci, value=val)
-                    cell.alignment = Alignment(wrap_text=True)
-                    cell.fill = PatternFill("solid", fgColor="FFE8F5E9")
-                row += 1
-
-            row += 1
-            # tRPC superior section
-            ws.cell(row=row, column=1, value=f"tRPC LEBIH OPTIMAL ({len(rq_data.get('trpc_superior',[]))} kasus):").font = Font(bold=True)
-            ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor="FFFFE0B2")
-            ws.merge_cells(f"A{row}:F{row}")
-            row += 1
-            for ci, h in enumerate(["Skenario","Test Type","Metrik","REST","tRPC","Δ","Kalimat"], 1):
-                _header_style(ws, row, ci, h, bg="FFE65100", fg="FFFFFFFF")
-            row += 1
-            if rq_data.get("trpc_superior"):
-                for e in rq_data["trpc_superior"]:
-                    row_vals = [
-                        e.get("scenario"), e.get("test_type"),
-                        e.get("metric"), _fmt_float(e.get("rest_mean"),2),
-                        _fmt_float(e.get("trpc_mean"),2),
-                        _fmt_float(e.get("delta"),2),
-                        e.get("sentence","")[:150],
-                    ]
-                    for ci, val in enumerate(row_vals, 1):
-                        cell = ws.cell(row=row, column=ci, value=val)
-                        cell.alignment = Alignment(wrap_text=True)
-                        cell.fill = PatternFill("solid", fgColor="FFFFE0B2")
-                    row += 1
-            else:
-                ws.merge_cells(f"A{row}:F{row}")
-                ws.cell(row=row, column=1,
-                        value="Tidak ada kasus di mana tRPC secara konfirmatoris unggul atas REST.").font = Font(italic=True)
-                ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor="FFFFE0B2")
-                row += 1
-
-        # RQ3 — recommendations
-        elif rq_id == "RQ3":
-            for ci, h in enumerate(["Use Case","Rekomendasi","Alasan"], 1):
-                _header_style(ws, row, ci, h, bg="FF1565C0", fg="FFFFFFFF")
-            row += 1
-            for rec in rq_data.get("recommendations",[]):
-                rec_bg = "FFE8F5E9" if rec.get("recommendation","").startswith("REST") else "FFFFE0B2"
-                for ci, val in enumerate([
-                    rec.get("use_case","")[:60],
-                    rec.get("recommendation",""),
-                    rec.get("reason","")[:200],
-                ], 1):
-                    cell = ws.cell(row=row, column=ci, value=val)
-                    cell.alignment = Alignment(wrap_text=True, vertical="top")
-                    cell.fill = PatternFill("solid", fgColor=rec_bg)
-                ws.row_dimensions[row].height = 50
-                row += 1
-
-        row += 2  # gap between RQs
-
-    # Column widths
-    ws.column_dimensions["A"].width = 28
-    ws.column_dimensions["B"].width = 14
-    ws.column_dimensions["C"].width = 24
-    ws.column_dimensions["D"].width = 12
-    ws.column_dimensions["E"].width = 12
-    ws.column_dimensions["F"].width = 50
-    ws.freeze_panes = "A3"
-    ws = wb.create_sheet("Hypotheses")
-    ws.merge_cells("A1:O1")
-    ws["A1"] = "RINGKASAN ANALISIS METRIK PRIMER — Per RQ"
-    ws["A1"].font      = Font(bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill      = PatternFill("solid", fgColor=COLORS["header_bg"])
-    ws["A1"].alignment = Alignment(horizontal="center")
-
-    headers = [
-        "Hipotesis", "Klaim", "Scenario", "Test Type", "Condition", "N",
-        "N Warning", "Metrik",
-        "REST Mean±SD", "tRPC Mean±SD", "Δ (%)",
-        "Cohen's d", "Magnitude", "Test", "p-value", "Sig?",
-        "Kesimpulan",
-    ]
-    row = 3
-    for ci, h in enumerate(headers, 1):
-        _header_style(ws, row, ci, h, bg=COLORS["header_bg"], fg=COLORS["header_fg"])
-    row += 1
-
-    groups = all_results.get("groups", {})
-
-    for hyp_id, claim, scenario, test_type, condition, metric_list in HYPOTHESIS_MAPPING:
-        matching = [
-            gv for gv in groups.values()
-            if (scenario is None or gv["scenario"] == scenario)
-            and gv["test_type"] == test_type
-            and gv.get("condition", "C2") == condition
-        ]
-
-        if not matching:
-            for ci, val in enumerate(
-                [hyp_id, claim, scenario or "semua", test_type, condition,
-                 "—", "—", "—", "—", "—", "—", "—", "—", "—", "—", "—", "Belum ada data"], 1
-            ):
-                ws.cell(row=row, column=ci, value=val)
-            row += 1
-            continue
-
-        for gv in matching:
-            for metric_name in metric_list:
-                analysis = gv["metrics"].get(metric_name, {})
-                if not analysis or not analysis.get("descriptive"):
-                    continue
-
-                desc   = analysis.get("descriptive", {})
-                dr     = desc.get("rest", {})
-                dt     = desc.get("trpc", {})
-                cd     = analysis.get("cohens_d", {})
-                inf    = analysis.get("inferential", analysis.get("ttest_reference", {}))
-                test_u = analysis.get("test_used", "ref")
-                n_warn = analysis.get("n_warning", "")
-
-                rm, rs = dr.get("mean"), dr.get("std")
-                tm, ts = dt.get("mean"), dt.get("std")
-                diff   = (rm - tm) if rm is not None and tm is not None else None
-                diffp  = (diff / tm * 100) if diff is not None and tm and tm != 0 else None
-                sig    = inf.get("significant")
-                cd_val = cd.get("d")
-                cd_mag = cd.get("magnitude", "")
-
-                rest_str = f"{rm:.2f}±{rs:.2f}" if rm is not None and rs is not None else "N/A"
-                trpc_str = f"{tm:.2f}±{ts:.2f}" if tm is not None and ts is not None else "N/A"
-                diff_str = f"{diffp:+.1f}%" if diffp is not None else "N/A"
-                concl    = analysis.get("conclusion", analysis.get("framing", ""))
-                # n_warning propagation: prefix conclusion if interim
-                if n_warn:
-                    concl = f"[INTERIM] {concl}"
-
-                # H1e direction check: hipotesis "tRPC payload lebih besar"
-                # tRPC harus lebih besar → diff (REST-tRPC) harus < 0
-                # Jika diff > 0 (REST lebih besar), conclusion perlu di-flag
-                if hyp_id == "H1e" and metric_name == "payload_bytes" and diff is not None:
-                    if diff > 0:
-                        concl = f"⚠ ARAH TERBALIK — {concl}"
-
-                # Issue #3 Fix: ⚠ jika d tidak_interpretatif
-                if cd_mag == "tidak_interpretatif":
-                    sig_display = "⚠ d≠"
-                else:
-                    sig_display = "✓" if sig else ("✗" if sig is False else "—")
-
-                row_vals = [
-                    hyp_id, claim, gv["scenario"], gv["test_type"],
-                    gv.get("condition", "C2"), gv["n"],
-                    n_warn[:40] if n_warn else "",
-                    METRIC_LABELS.get(metric_name, metric_name),
-                    rest_str, trpc_str, diff_str,
-                    _fmt_float(cd_val), cd.get("magnitude", "N/A"),
-                    test_u,
-                    _fmt_float(inf.get("p"), 4) if inf.get("p") is not None else "N/A",
-                    sig_display,
-                    concl[:60],
-                ]
-
-                # ISS-05: direction-aware coloring di Hypotheses sheet juga
-                bg = _excel_bg(metric_name, diff, sig, cd_val)
-
-                for ci, val in enumerate(row_vals, 1):
-                    cell = ws.cell(row=row, column=ci, value=val)
-                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                    if bg:
-                        cell.fill = PatternFill("solid", fgColor=bg)
-                row += 1
-
-    for ci in range(1, len(headers) + 1):
-        ws.column_dimensions[get_column_letter(ci)].width = 13
-    ws.column_dimensions["A"].width = 8
-    ws.column_dimensions["B"].width = 38
-    ws.column_dimensions["G"].width = 35
-    ws.column_dimensions["Q"].width = 45
-    ws.freeze_panes = "A4"
 
 
 def write_soak_sheet(wb, group_key: str, group: dict):
@@ -1792,202 +1539,6 @@ def plot_forest_plot(scenario, test_type, group, output_dir, condition="C2"):
     return _save(fig, output_dir, f"{scenario}_{test_type}_{condition}_forest_plot.png")
 
 
-def write_narasi_sheet(wb, interpretations: dict):
-    """
-    Sheet 'Narasi' — interpretasi naratif otomatis dari data statistik.
-    Berguna untuk referensi cepat saat menulis bab 4 skripsi.
-    """
-    ws = wb.create_sheet("Narasi")
-
-    ws.merge_cells("A1:F1")
-    ws["A1"] = "INTERPRETASI NARATIF OTOMATIS — ZENIT REST vs tRPC"
-    ws["A1"].font      = Font(bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill      = PatternFill("solid", fgColor=COLORS["header_bg"])
-    ws["A1"].alignment = Alignment(horizontal="center")
-
-    row = 3
-
-    # Overall summary
-    ws.cell(row=row, column=1,
-            value=interpretations.get("overall_summary", "")).font = Font(italic=True, size=11)
-    ws.merge_cells(f"A{row}:F{row}")
-    row += 2
-
-    # ── RQ1/RQ2/RQ3 section (menggantikan Hypothesis Verdicts) ───────────────
-    rq = interpretations.get("research_questions", {})
-
-    RQ_SECTION_COLOR = {
-        "RQ1": ("FF1565C0", "FFE3F2FD"),
-        "RQ2": ("FF2E7D32", "FFE8F5E9"),
-        "RQ3": ("FFF57F17", "FFFFF9C4"),
-    }
-
-    for rq_id, rq_data in [("RQ1", rq.get("RQ1",{})),
-                            ("RQ2", rq.get("RQ2",{})),
-                            ("RQ3", rq.get("RQ3",{}))]:
-        if not rq_data:
-            continue
-        hdr_color, bg = RQ_SECTION_COLOR.get(rq_id, ("FF1565C0","FFE3F2FD"))
-        ws.merge_cells(f"A{row}:F{row}")
-        ws.cell(row=row, column=1, value=f"{rq_id}: {rq_data.get('question','')[:80]}").font = Font(bold=True, size=11, color="FFFFFF")
-        ws.cell(row=row, column=1).fill      = PatternFill("solid", fgColor=hdr_color)
-        ws.cell(row=row, column=1).alignment = Alignment(horizontal="left", wrap_text=True)
-        ws.row_dimensions[row].height = 40
-        row += 1
-
-        summary = rq_data.get("summary") or rq_data.get("overall","")
-        ws.merge_cells(f"A{row}:F{row}")
-        ws.cell(row=row, column=1, value=summary[:350]).font = Font(italic=True)
-        ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=bg)
-        ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True)
-        ws.row_dimensions[row].height = 55
-        row += 1
-
-        # RQ2: show REST superior + tRPC superior
-        if rq_id == "RQ2":
-            n_r = len(rq_data.get("rest_superior",[]))
-            n_t = len(rq_data.get("trpc_superior",[]))
-            ws.cell(row=row, column=1, value=f"REST lebih optimal: {n_r} kasus  |  tRPC lebih optimal: {n_t} kasus").font = Font(bold=True)
-            ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=bg)
-            ws.merge_cells(f"A{row}:F{row}")
-            row += 1
-            # REST cases (top 5)
-            for e in rq_data.get("rest_superior",[])[:5]:
-                if not e.get("exploratory"):  # prioritize confirmatory
-                    ws.cell(row=row, column=1, value=f"✓ REST: {e.get('sentence','')[:200]}")
-                    ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor="FFE8F5E9")
-                    ws.merge_cells(f"A{row}:F{row}")
-                    ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True)
-                    ws.row_dimensions[row].height = 40
-                    row += 1
-            # tRPC cases
-            for e in rq_data.get("trpc_superior",[])[:3]:
-                ws.cell(row=row, column=1, value=f"↑ tRPC: {e.get('sentence','')[:200]}")
-                ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor="FFFFE0B2")
-                ws.merge_cells(f"A{row}:F{row}")
-                ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True)
-                ws.row_dimensions[row].height = 40
-                row += 1
-            if not rq_data.get("trpc_superior"):
-                ws.cell(row=row, column=1,
-                        value="↑ tRPC: Tidak ada kasus konfirmatoris di mana tRPC secara signifikan unggul atas REST.")
-                ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor="FFFFE0B2")
-                ws.merge_cells(f"A{row}:F{row}")
-                row += 1
-
-        # RQ3: recommendation
-        if rq_id == "RQ3":
-            for rec in rq_data.get("recommendations",[]):
-                rec_bg = "FFE8F5E9" if rec.get("recommendation","").startswith("REST") else "FFFFE0B2"
-                ws.cell(row=row, column=1, value=f"→ {rec['use_case']}: {rec['recommendation']} — {rec['reason'][:180]}")
-                ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=rec_bg)
-                ws.merge_cells(f"A{row}:F{row}")
-                ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True)
-                ws.row_dimensions[row].height = 45
-                row += 1
-
-        row += 1  # gap
-
-    # ── Cross-scenario patterns ───────────────────────────────────────────
-    row += 1
-    ws.merge_cells(f"A{row}:F{row}")
-    ws.cell(row=row, column=1, value="POLA LINTAS SKENARIO — Load C2 (N=10)").font = Font(bold=True, size=12, color="FFFFFF")
-    ws.cell(row=row, column=1).fill      = PatternFill("solid", fgColor=COLORS["header_bg"])
-    ws.cell(row=row, column=1).alignment = Alignment(horizontal="center")
-    row += 1
-
-    for ci, h in enumerate(["Metrik", "Pola Arah", "REST Wins", "tRPC Wins", "Avg d", "Deskripsi"], 1):
-        _header_style(ws, row, ci, h, bg=COLORS["header_bg"], fg=COLORS["header_fg"])
-    row += 1
-
-    for pat in interpretations.get("patterns", []):
-        direction = pat.get("direction", "")
-        bg_hex    = "FFE8F5E9" if "REST" in direction else ("FFFFE0B2" if "tRPC" in direction else "FFF5F5F5")
-        for ci, val in enumerate([
-            pat.get("label", ""), direction,
-            pat.get("n_rest_wins", 0), pat.get("n_trpc_wins", 0),
-            pat.get("avg_d"), pat.get("description", "")[:150],
-        ], 1):
-            cell = ws.cell(row=row, column=ci, value=val)
-            cell.alignment = Alignment(wrap_text=True)
-            cell.fill      = PatternFill("solid", fgColor=bg_hex)
-        row += 1
-
-    # ── Per-group key findings ────────────────────────────────────────────
-    row += 1
-    ws.merge_cells(f"A{row}:F{row}")
-    ws.cell(row=row, column=1, value="TEMUAN NOTABLE PER SKENARIO — Load C2").font = Font(bold=True, size=12, color="FFFFFF")
-    ws.cell(row=row, column=1).fill      = PatternFill("solid", fgColor=COLORS["header_bg"])
-    ws.cell(row=row, column=1).alignment = Alignment(horizontal="center")
-    row += 1
-
-    for ci, h in enumerate(["Skenario", "Overall", "Metrik", "Winner", "Kalimat Interpretasi", "Catatan Praktis"], 1):
-        _header_style(ws, row, ci, h, bg=COLORS["header_bg"], fg=COLORS["header_fg"])
-    row += 1
-
-    for gk in sorted(interpretations.get("groups", {}).keys()):
-        gi = interpretations["groups"][gk]
-        if gi.get("test_type") != "load":
-            continue
-        sc_label = gi.get("scenario", "?").upper()
-        overall  = gi.get("overall", "")
-
-        for flag in gi.get("flags", []):
-            for ci, val in enumerate([sc_label, "⚠ FLAG", "—", "—", flag, ""], 1):
-                cell = ws.cell(row=row, column=ci, value=val)
-                cell.fill = PatternFill("solid", fgColor="FFFFF3E0")
-            row += 1
-
-        for mn, mi in gi.get("metrics", {}).items():
-            if not mi:
-                continue
-            bg = "FFE8F5E9" if mi.get("winner") == "REST" else "FFFFE0B2"
-            for ci, val in enumerate([
-                sc_label, overall[:60],
-                mi.get("label", mn), mi.get("winner", "?"),
-                mi.get("sentence", "")[:200], mi.get("practical", "")[:100],
-            ], 1):
-                cell = ws.cell(row=row, column=ci, value=val)
-                cell.alignment = Alignment(wrap_text=True, vertical="top")
-                if ci == 4:
-                    cell.fill = PatternFill("solid", fgColor=bg)
-            ws.row_dimensions[row].height = 45
-            row += 1
-
-    # ── Soak interpretation ───────────────────────────────────────────────
-    row += 1
-    ws.merge_cells(f"A{row}:F{row}")
-    ws.cell(row=row, column=1, value="INTERPRETASI SOAK TEST — Memory Slope").font = Font(bold=True, size=12, color="FFFFFF")
-    ws.cell(row=row, column=1).fill      = PatternFill("solid", fgColor=COLORS["header_bg"])
-    ws.cell(row=row, column=1).alignment = Alignment(horizontal="center")
-    row += 1
-
-    for ci, h in enumerate(["Scenario", "REST Interp", "tRPC Interp", "Perbandingan", "Catatan R²", "Anomaly?"], 1):
-        _header_style(ws, row, ci, h, bg=COLORS["header_bg"], fg=COLORS["header_fg"])
-    row += 1
-
-    for sc_name, si in interpretations.get("soak", {}).items():
-        is_anomaly = si.get("anomaly", False)
-        bg_hex     = "FFFFF3E0" if is_anomaly else "FFFFFFFF"
-        for ci, val in enumerate([
-            SCENARIO_LABELS.get(sc_name, sc_name),
-            si.get("rest_interp", "N/A")[:80],
-            si.get("trpc_interp", "N/A")[:80],
-            si.get("comparison",  "")[:100],
-            si.get("rest_r2_note", "")[:120],
-            "⚠ YA" if is_anomaly else "OK",
-        ], 1):
-            cell = ws.cell(row=row, column=ci, value=val)
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
-            cell.fill      = PatternFill("solid", fgColor=bg_hex)
-        ws.row_dimensions[row].height = 50
-        row += 1
-
-    for ci, w in enumerate([14, 30, 22, 12, 60, 35], 1):
-        ws.column_dimensions[get_column_letter(ci)].width = w
-    ws.freeze_panes = "A4"
-
-
 def write_chart_desc_sheet(wb, interpretations: dict):
     """
     Sheet 'ChartDesc' — deskripsi otomatis semua chart.
@@ -2153,30 +1704,21 @@ def generate_report(analysis_results: dict, output_dir: str,
         json.dump(slim, f, indent=2, ensure_ascii=False, default=str)
     print(f"  ✓ Raw JSON: {raw_json_path}")
 
-    # ── Bab 4 Draft .md ──────────────────────────────────────────────────
-    if interpretations and interpretations.get("bab4_draft"):
-        draft_path = os.path.join(output_dir, "bab4_draft.md")
-        with open(draft_path, "w", encoding="utf-8") as f:
-            f.write(interpretations["bab4_draft"])
-        print(f"  ✓ Bab 4 Draft: {draft_path}")
-
     # ── Excel ─────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
     write_summary_sheet(wb, analysis_results)
-    write_research_questions_sheet(wb, analysis_results, interpretations)
     write_cross_scenario_sheet(wb, analysis_results)
     write_effect_size_matrix_sheet(wb, analysis_results)
     write_soak_comparison_sheet(wb, analysis_results)
     write_order_effects_sheet(wb, analysis_results)
 
     if interpretations:
-        write_narasi_sheet(wb, interpretations)
         write_chart_desc_sheet(wb, interpretations)
-        print(f"  ✓ New sheets: Research_Questions, CrossScenario, EffectSizeMatrix, SoakComparison, OrderEffects, Narasi, ChartDesc")
+        print(f"  ✓ New sheets: CrossScenario, EffectSizeMatrix, SoakComparison, OrderEffects, ChartDesc")
     else:
-        print(f"  ✓ New sheets: Research_Questions, CrossScenario, EffectSizeMatrix, SoakComparison, OrderEffects")
+        print(f"  ✓ New sheets: CrossScenario, EffectSizeMatrix, SoakComparison, OrderEffects")
 
     soak_groups    = {}
     decomp_results = analysis_results.get("decompositions", {})

@@ -5,11 +5,16 @@ Lapisan interpretasi naratif berbasis Pertanyaan Penelitian (RQ1/RQ2/RQ3).
 Fungsi utama:
   generate_interpretations(all_results)       → dict lengkap
   generate_chart_descriptions(all_results)    → dict per filename
-  generate_bab4_draft(interpretations, soak)  → string markdown
 
 RQ1: Bagaimana perbandingan kinerja tRPC vs REST?
 RQ2: Kondisi/skenario apa REST atau tRPC lebih optimal? (bidirectional)
 RQ3: Arsitektur mana yang direkomendasikan?
+
+REMOVED:
+  generate_bab5_draft() dihapus. Auto-generated markdown draft tidak dipakai
+  sebagai sumber teks Bab 5 final. research_questions tetap dihitung dan
+  tersedia untuk tampilan terminal (main.py), tapi tidak lagi diekspor
+  sebagai file draft maupun sheet Excel terpisah.
 """
 
 # ---------------------------------------------------------------------------
@@ -18,9 +23,9 @@ RQ3: Arsitektur mana yang direkomendasikan?
 
 LOWER_IS_BETTER = {
     "p95", "p99", "avg_rt", "med_rt",
-    "sla_breach", "functional_error", "db_query_avg_ms",
+    "sla_breach", "functional_error", "http_req_failed", "db_query_avg_ms",
     # Fix #1: tambahkan resource metrics — lower = lebih efisien
-    "cpu_pct", "mem_mb", "payload_bytes",
+    "cpu_pct", "cpu_total_pct", "mem_mb", "payload_bytes",
 }
 HIGHER_IS_BETTER = {"throughput", "http_count"}
 
@@ -34,10 +39,12 @@ METRIC_LABELS = {
     "p99":                "P99 Latency (ms)",
     "avg_rt":             "Avg Response Time (ms)",
     "throughput":         "Throughput (req/s)",
-    "cpu_pct":            "CPU Usage (%)",
+    "cpu_pct":            "CPU Usage (Node, %)",
+    "cpu_total_pct":      "System CPU (%)",
     "mem_mb":             "RAM Usage (MB)",
     "sla_breach":         "SLA Breach Rate",
     "functional_error":   "Functional Error Rate",
+    "http_req_failed":    "HTTP Req Failed Rate",
     "http_count":         "HTTP Request Count",
     "payload_bytes":      "Payload Size (bytes)",
     "db_query_avg_ms":    "DB Query Avg (ms)",
@@ -54,8 +61,8 @@ SCENARIO_LABELS = {
 
 SCENARIO_ORDER  = ["s01_browse","s02_shopping","s03_checkout","s04_auth","s05_admin"]
 PRIMARY_METRICS = ["p95","throughput","cpu_pct","mem_mb","avg_rt","sla_breach"]
-ALL_METRICS     = ["p95","p99","avg_rt","throughput","cpu_pct","mem_mb",
-                   "sla_breach","functional_error","http_count","payload_bytes",
+ALL_METRICS     = ["p95","p99","avg_rt","throughput","cpu_pct","cpu_total_pct","mem_mb",
+                   "sla_breach","functional_error","http_req_failed","http_count","payload_bytes",
                    "db_query_avg_ms","network_total_kb_s"]
 
 
@@ -1083,199 +1090,6 @@ def generate_chart_descriptions(all_results):
 
 
 # ---------------------------------------------------------------------------
-# BAB 4 DRAFT
-# ---------------------------------------------------------------------------
-
-def generate_bab4_draft(interpretations, soak_interp=None):
-    lines = []
-    def h(level, text): lines.append(f"{'#'*level} {text}\n")
-    def p(text):        lines.append(f"{text}\n")
-    def blank():        lines.append("")
-
-    h(1, "BAB 4 — HASIL DAN PEMBAHASAN (Draft Otomatis)")
-    p("*Draft ini digenerate otomatis dari hasil analisis pipeline ZENIT. "
-      "Revisi dan penyesuaian konteks tetap diperlukan sebelum submission.*")
-    blank()
-
-    # 4.1 Gambaran Umum
-    h(2, "4.1 Gambaran Umum Hasil Pengujian")
-    p(interpretations.get("overall_summary",""))
-    blank()
-
-    rq  = interpretations.get("research_questions", {})
-    rq1 = rq.get("RQ1", {})
-    rq2 = rq.get("RQ2", {})
-    rq3 = rq.get("RQ3", {})
-
-    # 4.2 Pola Lintas Skenario
-    h(2, "4.2 Pola Perbandingan Lintas Skenario (Load Test, N=10)")
-    p("Analisis lintas skenario dilakukan untuk mengidentifikasi pola konsisten "
-      "antara REST dan tRPC yang tidak bergantung pada satu skenario spesifik.")
-    blank()
-    for pat in interpretations.get("patterns", []):
-        p(f"**{pat['label']}**: {pat['description']}")
-    blank()
-
-    # 4.3 Per-Skenario Load
-    h(2, "4.3 Hasil Per Skenario — Load Test (N=10, Konfirmatoris)")
-    groups_interp = interpretations.get("groups", {})
-    for sc_name in SCENARIO_ORDER:
-        gk = f"{sc_name}__load__C2"
-        gi = groups_interp.get(gk)
-        if not gi:
-            continue
-        sc_label = SCENARIO_LABELS.get(sc_name, sc_name)
-        h(3, f"4.3.{SCENARIO_ORDER.index(sc_name)+1} {sc_label}")
-        for flag in gi.get("flags",[]):
-            p(f"> ⚠ **{flag}**")
-        if gi.get("flags"):
-            blank()
-        p(f"**Ringkasan**: {gi.get('overall','')}")
-        blank()
-        for mn, mi in gi.get("metrics",{}).items():
-            if not mi:
-                continue
-            if mi.get("significant") or mi.get("magnitude") in ("besar","sedang") or mi.get("flag"):
-                p(mi.get("sentence",""))
-                if mi.get("practical"):
-                    p(f"*Implikasi praktis: {mi['practical']}*")
-                blank()
-
-    # 4.4 Soak Test
-    h(2, "4.4 Hasil Soak Test (N=1, Observasional)")
-    p("Soak test bersifat observasional (N=1) — tidak ada uji inferensial valid. "
-      "Fokus pada slope pertumbuhan memori (MB/jam) dan R².")
-    blank()
-    if soak_interp:
-        for sc_name, si in soak_interp.items():
-            sc_label = SCENARIO_LABELS.get(sc_name, sc_name)
-            h(4, sc_label)
-            p(f"REST: {si.get('rest_interp','N/A')}")
-            p(f"tRPC: {si.get('trpc_interp','N/A')}")
-            p(f"Perbandingan: {si.get('comparison','')}")
-            if si.get("rest_r2_note"):
-                p(f"**{si['rest_r2_note']}**")
-            p(f"_{si.get('p_note','')}_")
-            blank()
-
-    # 4.5 Jawaban Pertanyaan Penelitian
-    h(2, "4.5 Jawaban Pertanyaan Penelitian")
-
-    # RQ1
-    h(3, "4.5.1 RQ1 — Perbandingan Kinerja REST vs tRPC")
-    p(f"**Pertanyaan**: {rq1.get('question','')}")
-    blank()
-    p(f"**Jawaban**: {rq1.get('summary','')}")
-    blank()
-    p("Rincian per metrik (load test C2, N=10):")
-    for mn, mv in rq1.get("metrics",{}).items():
-        if mv.get("n_rest_wins",0) >= 4 or mv.get("n_trpc_wins",0) >= 4:
-            p(f"- **{mv['label']}**: {mv['finding']}")
-    blank()
-
-    # RQ2
-    h(3, "4.5.2 RQ2 — Kondisi Optimal REST dan tRPC")
-    p(f"**Pertanyaan**: {rq2.get('question','')}")
-    blank()
-    p(f"**REST lebih optimal**: {rq2.get('rest_summary','')}")
-    blank()
-    if rq2.get("rest_superior"):
-        p("Kasus konfirmatoris (load N=10, signifikan):")
-        conf = [e for e in rq2["rest_superior"] if not e.get("exploratory")]
-        for e in conf[:6]:
-            p(f"- {e.get('sentence','')}")
-        blank()
-    p(f"**tRPC lebih optimal**: {rq2.get('trpc_summary','')}")
-    blank()
-    if rq2.get("trpc_superior"):
-        p("Kasus di mana tRPC unggul:")
-        for e in rq2["trpc_superior"][:6]:
-            p(f"- {e.get('sentence','')}")
-        blank()
-
-    # RQ3
-    h(3, "4.5.3 RQ3 — Rekomendasi Arsitektur API")
-    p(f"**Pertanyaan**: {rq3.get('question','')}")
-    blank()
-    p(f"**Rekomendasi utama**: {rq3.get('primary_recommendation','')} — {rq3.get('reasoning','')}")
-    blank()
-    p("Rekomendasi per use case:")
-    for rec in rq3.get("recommendations",[]):
-        p(f"- **{rec['use_case']}** → {rec['recommendation']}: {rec['reason']}")
-    blank()
-    p(rq3.get("overall",""))
-    blank()
-
-    # 4.6 Stress & Spike
-    h(2, "4.6 Hasil Stress dan Spike Test (N=3, Eksploratoris)")
-    p("Stress dan spike test bersifat eksploratoris. "
-      "Uji statistik digunakan sebagai referensi — bukan untuk klaim konfirmatoris "
-      "(power sangat rendah, df=2).")
-    blank()
-    for sc_name in SCENARIO_ORDER:
-        for tt in ("stress","spike"):
-            gk = f"{sc_name}__{tt}__C2"
-            gi = groups_interp.get(gk)
-            if not gi:
-                continue
-            sc_label = SCENARIO_LABELS.get(sc_name, sc_name)
-            sig_m = [mi for mi in gi.get("metrics",{}).values()
-                     if mi and mi.get("significant") and mi.get("magnitude") in ("besar","sedang")]
-            if sig_m:
-                h(4, f"{sc_label} — {tt.upper()}")
-                for mi in sig_m[:3]:
-                    p(f"- {mi.get('sentence','')[:150]}")
-                blank()
-
-    # 4.7 Dekomposisi C3/C4
-    h(2, "4.7 Analisis Dekomposisi Arsitektur (C3/C4, N=1)")
-    p("Analisis C3 (auth equalized) dan C4 (tRPC batching) bersifat estimatif — "
-      "N=1 tidak memungkinkan klaim konfirmatoris. "
-      "Lihat sheet Decomposition di Excel untuk angka spesifik per metrik dan skenario.")
-    blank()
-
-    # 4.8 Limitasi
-    h(2, "4.8 Catatan Limitasi (Reminder untuk Bab 5)")
-    p("*Poin-poin berikut perlu dimasukkan ke bab batasan penelitian/limitasi:*")
-    blank()
-    p("1. **Variabilitas pengujian**: Infrastruktur shared (DigitalOcean droplet) "
-      "tidak sepenuhnya terisolasi — variasi latensi jaringan dan fluktuasi beban server "
-      "tidak dapat dieliminasi sepenuhnya. Paired measurement diterapkan untuk meminimalkan dampak.")
-    blank()
-    p("2. **N terbatas pada beberapa kondisi**: Soak (N=1), C3 (N=1), C4 (N=1), "
-      "stress/spike (N=3). Kondisi ini tidak memungkinkan uji inferensial konfirmatoris. "
-      "Temuan bersifat observasional/estimatif dan perlu replikasi untuk validasi.")
-    blank()
-    p("3. **Multiple comparison**: Banyak metrik diuji secara eksploratoris di luar "
-      "metrik primer yang menjawab RQ1–RQ3. Untuk menjaga kehati-hatian interpretasi, "
-      "temuan diklasifikasikan sebagai konfirmatoris (load N=10, p<0.05 + Cohen's d ≥ sedang) "
-      "atau eksploratoris (stress/spike N=3, soak N=1). Metrik pendukung "
-      "diinterpretasi dengan cautious tanpa klaim kausalitas.")
-    blank()
-    p("4. **Generalisasi terbatas**: Hasil hanya berlaku untuk ekosistem Node.js/TypeScript "
-      "dengan konfigurasi identik. Implementasi REST atau tRPC yang berbeda "
-      "(framework, library, ORM) dapat menghasilkan performa yang berbeda.")
-    blank()
-    p("5. **S04 CPU saturation**: Skenario S04 Auth berada dalam kondisi CPU-bound "
-      "akibat bcrypt — perbandingan protokol tidak dapat diisolasi dari "
-      "computational overhead. Hasil S04 mencerminkan beban CPU-intensive, "
-      "bukan perbedaan efisiensi protokol murni.")
-    blank()
-    p("6. **Order effect**: Counterbalancing 5:5 dilakukan. Verifikasi mendeteksi "
-      "potensi order effect pada S02, S04, S05 pada beberapa metrik — "
-      "perlu diakui sebagai sumber variasi yang tidak sepenuhnya tereliminasi.")
-    blank()
-
-    # 4.9 Panduan Chart
-    h(2, "4.9 Panduan Interpretasi Chart (Auto-generated)")
-    p("*Deskripsi chart tersedia di sheet ChartDesc Excel dan JSON key chart_descriptions. "
-      "Gunakan sebagai basis caption gambar di skripsi.*")
-    blank()
-
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
 # MASTER FUNCTION
 # ---------------------------------------------------------------------------
 
@@ -1321,5 +1135,4 @@ def generate_interpretations(all_results):
         "overall_summary":    overall_summary,
     }
 
-    interp["bab4_draft"] = generate_bab4_draft(interp, soak_interp)
     return interp
