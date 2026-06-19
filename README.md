@@ -81,8 +81,10 @@ k6 run --out json=results/s01_load_c1.json scenarios/s01_auth/load.js
 
 # Run full analysis
 cd analysis
-$ python generate_manifest.py validate --manifest ../results/run_manifest.json --results-dir ../results/ //validasi raw data
-$ python main.py --manifest ../results/run_manifest.json --results ../results/ --output ../charts/ //full run analysis and put the results in charts
+# Validasi raw data
+$ python generate_manifest.py validate --manifest ../results/run_manifest.json --results-dir ../results/
+# Full run analysis and put the results in charts
+$ python main.py --manifest ../results/run_manifest.json --results ../results/ --output ../charts/ 
 ```
 
 ---
